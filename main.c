@@ -13,6 +13,28 @@
 #include "TivaWare_C_Series-2.2.0.295/driverlib/pin_map.h"
 #include "TivaWare_C_Series-2.2.0.295/driverlib/i2c.h"
 
+
+/* Definitions */
+#define SPEED_THRESHOLD_KMH 10.0
+
+// Simulated GPIO definitions
+#define DOOR_SWITCH_PORT 0
+#define DOOR_SWITCH_PIN  0
+
+#define BUZZER_PORT 0
+#define BUZZER_PIN  0
+
+/* Globals */
+float g_vehicleSpeed = 0.0;
+
+// Simulated hardware state
+static int simulated_door_state = 0;  // 0 = closed, 1 = open
+static int simulated_buzzer_state = 0; // 0 = off, 1 = on
+
+void AccelerometerTask(void *pvParameters);
+void Accelerometer_Init(void);
+float AccelerometerReadSpeed(void);
+
 // I2C LCD Configuration
 #define LCD_I2C_ADDRESS 0x27  // Common I2C address for PCF8574-based LCD
 #define LCD_COLUMNS 16
@@ -27,6 +49,8 @@
 // Global FreeRTOS Objects
 QueueHandle_t buttonQueue;
 SemaphoreHandle_t lcdMutex;
+xSemaphoreHandle xSpeedMutex;
+
 
 // I2C LCD Functions
 void I2C0_Init(void) {
@@ -202,6 +226,53 @@ void DoorControlTask(void *pvParameters) {
     }
 }
 
+void Accelerometer_Init(void)
+{
+    // Wake up MPU6050 (disable sleep mode) - simulated
+    // I2CMasterSlaveAddrSet(I2C0_BASE, 0x68, false);
+    // I2CMasterDataPut(I2C0_BASE, 0x6B);
+    // I2CMasterControl(I2C0_BASE, I2C_MASTER_CMD_BURST_SEND_START);
+    // while(I2CMasterBusy(I2C0_BASE));
+
+    // I2CMasterDataPut(I2C0_BASE, 0x00);
+    // I2CMasterControl(I2C0_BASE, I2C_MASTER_CMD_BURST_SEND_FINISH);
+    // while(I2CMasterBusy(I2C0_BASE));
+}
+
+float AccelerometerReadSpeed(void)
+{
+    // Simulated speed reading - cycles between 0 and 20 km/h
+    static float fakeSpeed = 0;
+    fakeSpeed += 0.5;
+    if (fakeSpeed > 20.0)
+        fakeSpeed = 0;
+
+    // Simulate door opening/closing randomly
+    static int counter = 0;
+    if (++counter > 30) {
+        simulated_door_state = !simulated_door_state;
+        counter = 0;
+        printf("Door state changed to: %s\n", simulated_door_state ? "OPEN" : "CLOSED");
+    }
+
+    return fakeSpeed;
+}
+
+void AccelerometerTask(void *pvParameters)
+{
+    while(1)
+    {
+        float speed = AccelerometerReadSpeed();
+
+        if (xSemaphoreTake(xSpeedMutex, (TickType_t)10) == pdTRUE)
+        {
+            g_vehicleSpeed = speed;
+            xSemaphoreGive(xSpeedMutex);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
 int main(void) {
     // Initialize system clock
     SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL | SYSCTL_XTAL_16MHZ | SYSCTL_OSC_MAIN);
@@ -213,11 +284,11 @@ int main(void) {
     // Create FreeRTOS objects
     buttonQueue = xQueueCreate(5, sizeof(uint32_t));
     lcdMutex = xSemaphoreCreateMutex();
-    
+    xSpeedMutex = xSemaphoreCreateMutex();
     // Create tasks
     xTaskCreate(ButtonMonitorTask, "BtnMon", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
     xTaskCreate(DoorControlTask, "DoorCtrl", configMINIMAL_STACK_SIZE, NULL, 3, NULL);
-    
+    xTaskCreate(AccelerometerTask, "Accelerometer", 128, NULL, 2, NULL);
     // Start scheduler
     vTaskStartScheduler();
     
